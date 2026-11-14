@@ -1,5 +1,5 @@
 ﻿\xEF\xBB\xBF# ============================================================
-#  AutoTask by next  -  painel de instalação (Vencord + QuestSpoofer)
+#  AutoTask by Kanji  -  painel de instalação (Vencord + QuestSpoofer)
 #  Uso:  powershell -ExecutionPolicy Bypass -File .\AutoTask.ps1
 # ============================================================
 
@@ -19,7 +19,7 @@ try {
     [void][Win32.Con]::GetConsoleMode($h, [ref]$mode)
     [void][Win32.Con]::SetConsoleMode($h, ($mode -bor 4))
 } catch {}
-$Host.UI.RawUI.WindowTitle = "AutoTask by next"
+$Host.UI.RawUI.WindowTitle = "AutoTask by Kanji"
 
 # ---------- Configuração ----------
 $PluginRepo  = "https://github.com/nextz0123/AutoTask.git"
@@ -42,13 +42,14 @@ $W  = [Math]::Min(92, $cw - 2)
 
 function C($rgb, [string]$text) { "$esc[38;2;$($rgb[0]);$($rgb[1]);$($rgb[2])m$text$esc[0m" }
 function Lerp($a, $b, $t) { [int]($a + ($b - $a) * $t) }
-function Grad([string]$text, $c1, $c2) {
+function Grad([string]$text, $c1, $c2, [double]$phase = -1) {
     $n = [Math]::Max($text.Length - 1, 1)
     $sb = New-Object System.Text.StringBuilder
     for ($i = 0; $i -lt $text.Length; $i++) {
         $ch = $text[$i]
         if ($ch -eq ' ') { [void]$sb.Append(' '); continue }
         $t = $i / $n
+        if ($phase -ge 0) { $t = [Math]::Abs(2 * ((($i / $n) + $phase) % 1.0) - 1) }
         $r = Lerp $c1[0] $c2[0] $t; $g = Lerp $c1[1] $c2[1] $t; $b = Lerp $c1[2] $c2[2] $t
         [void]$sb.Append("$esc[38;2;$r;$g;${b}m$ch")
     }
@@ -79,6 +80,45 @@ function Get-Banner([string]$word) {
     $rows
 }
 $BannerRows = Get-Banner "AUTOTASK"
+
+# Paleta de cores por coluna (efeito de degradê que se move)
+function Get-Pal([int]$len, [double]$phase, [double]$dim) {
+    $pal = New-Object 'string[]' $len
+    $n = [Math]::Max($len - 1, 1)
+    for ($i = 0; $i -lt $len; $i++) {
+        $t = [Math]::Abs(2 * ((($i / $n) + $phase) % 1.0) - 1)
+        $r = [int](($cA[0] + ($cB[0] - $cA[0]) * $t) * $dim)
+        $g = [int](($cA[1] + ($cB[1] - $cA[1]) * $t) * $dim)
+        $b = [int](($cA[2] + ($cB[2] - $cA[2]) * $t) * $dim)
+        $pal[$i] = "$esc[38;2;$r;$g;${b}m"
+    }
+    , $pal
+}
+function Paint([string]$text, $pal) {
+    $sb = New-Object System.Text.StringBuilder
+    for ($i = 0; $i -lt $text.Length; $i++) {
+        $ch = $text[$i]
+        if ($ch -eq ' ') { [void]$sb.Append(' ') } else { [void]$sb.Append($pal[$i]); [void]$sb.Append($ch) }
+    }
+    [void]$sb.Append("$esc[0m")
+    $sb.ToString()
+}
+
+# Gotas a escorrer por baixo das letras (efeito "derretido")
+function New-Drips {
+    $rng = New-Object System.Random
+    $bottom = $BannerRows[4]
+    $glyph = @("▓", "▒", "░")
+    $rows = 1..3 | ForEach-Object { , ((" " * $bottom.Length).ToCharArray()) }
+    for ($x = 0; $x -lt $bottom.Length; $x++) {
+        if ($bottom[$x] -eq '█' -and $rng.NextDouble() -lt 0.35) {
+            $l = 1 + [int][Math]::Floor($rng.NextDouble() * 3)
+            for ($d = 0; $d -lt $l; $d++) { $rows[$d][$x] = [char]$glyph[$d] }
+        }
+    }
+    $script:Drips = @($rows | ForEach-Object { -join $_ })
+}
+New-Drips
 $ShowBanner = ($W -ge 90)
 
 # ---------- Desenho ----------
@@ -109,18 +149,24 @@ $Items = @(
     @{ T = "Sair";                   D = "fecha o painel" }
 )
 
-function Draw([int]$sel) {
-    $s = Get-Status
+function Draw([int]$sel, [double]$phase, $s) {
     $L = New-Object System.Collections.Generic.List[string]
     $L.Add((C $cBord "╭") + (C $cBord ("─" * $W)) + (C $cBord "╮"))
     $L.Add((Row ""))
     if ($ShowBanner) {
-        foreach ($row in $BannerRows) { $L.Add((Row (Grad $row $cA $cB) -Center)) }
+        $len = $BannerRows[0].Length
+        $pal = Get-Pal $len $phase 1.0
+        foreach ($row in $BannerRows) { $L.Add((Row (Paint $row $pal) -Center)) }
+        $dimLevels = @(0.75, 0.55, 0.35)
+        for ($d = 0; $d -lt 3; $d++) {
+            $palD = Get-Pal $len $phase $dimLevels[$d]
+            $L.Add((Row (Paint $Drips[$d] $palD) -Center))
+        }
     } else {
-        $L.Add((Row (Grad "A U T O T A S K" $cA $cB) -Center))
+        $L.Add((Row (Grad "A U T O T A S K" $cA $cB $phase) -Center))
     }
     $L.Add((Row ""))
-    $L.Add((Row ((C $cDim "─────  ") + (Grad "by next" $cB $cA) + (C $cDim "  ─────")) -Center))
+    $L.Add((Row ((C $cDim "─────  ") + (Grad "by Kanji" $cB $cA $phase) + (C $cDim "  ─────")) -Center))
     $L.Add((Row (C $cDim "Vencord + QuestSpoofer  ·  instalador automático") -Center))
     $L.Add((Row ""))
     $L.Add((Sep))
@@ -254,25 +300,37 @@ function Invoke-Action([int]$i) {
 [Console]::CursorVisible = $false
 Clear-Host
 $sel = 0
+$phase = 0.0
+$tick = 0
+$status = Get-Status
 :main while ($true) {
-    Draw $sel
-    $k = [Console]::ReadKey($true)
+    if ($tick % 25 -eq 0) { $status = Get-Status }
+    Draw $sel $phase $status
+    $phase = ($phase + 0.015) % 1.0
+    $tick++
     $act = -1
-    switch ($k.Key) {
-        "UpArrow"   { $sel = ($sel + $Items.Count - 1) % $Items.Count }
-        "DownArrow" { $sel = ($sel + 1) % $Items.Count }
-        "Enter"     { $act = $sel }
-        "Escape"    { break main }
-        default {
-            $d = [string]$k.KeyChar
-            if ($d -match '^[1-5]$') { $sel = [int]$d - 1; $act = $sel }
+    if ([Console]::KeyAvailable) {
+        $k = [Console]::ReadKey($true)
+        switch ($k.Key) {
+            "UpArrow"   { $sel = ($sel + $Items.Count - 1) % $Items.Count }
+            "DownArrow" { $sel = ($sel + 1) % $Items.Count }
+            "Enter"     { $act = $sel }
+            "Escape"    { break main }
+            default {
+                $d = [string]$k.KeyChar
+                if ($d -match '^[1-5]$') { $sel = [int]$d - 1; $act = $sel }
+            }
         }
+    } else {
+        Start-Sleep -Milliseconds 70
     }
     if ($act -ge 0) {
         if ($act -eq 4) { break main }
         Invoke-Action $act
+        $status = Get-Status
+        New-Drips
     }
 }
 [Console]::CursorVisible = $true
 Clear-Host
-Write-Host (Grad "AutoTask by next" $cA $cB)
+Write-Host (Grad "AutoTask by Kanji" $cA $cB)
